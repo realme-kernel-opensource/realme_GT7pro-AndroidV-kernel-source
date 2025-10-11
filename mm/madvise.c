@@ -45,6 +45,7 @@
 struct madvise_walk_private {
 	struct mmu_gather *tlb;
 	bool pageout;
+	void *private;
 };
 
 /*
@@ -186,6 +187,7 @@ success:
 		error = replace_anon_vma_name(vma, anon_name);
 		if (error)
 			return error;
+		trace_android_vh_replace_anon_vma_name(vma, anon_name);
 	}
 
 	return 0;
@@ -372,10 +374,18 @@ static int madvise_cold_or_pageout_pte_range(pmd_t *pmd,
 	struct folio *folio = NULL;
 	LIST_HEAD(folio_list);
 	bool pageout_anon_only_filter;
+	bool abort_madvise = false;
 	int nr;
+	swp_entry_t entry;
+	int ret = 0;
 
-	if (fatal_signal_pending(current))
+	trace_android_vh_madvise_cold_or_pageout_abort(vma, &abort_madvise);
+	if (fatal_signal_pending(current) || abort_madvise)
 		return -EINTR;
+
+	trace_android_vh_madvise_pageout_bypass(mm, pageout, &ret);
+	if (ret)
+		return ret;
 
 	pageout_anon_only_filter = pageout && !vma_is_anonymous(vma) &&
 					!can_do_file_pageout(vma);
@@ -447,7 +457,7 @@ static int madvise_cold_or_pageout_pte_range(pmd_t *pmd,
 huge_unlock:
 		spin_unlock(ptl);
 		if (pageout)
-			reclaim_pages(&folio_list, true);
+			__reclaim_pages(&folio_list, true, private->private);
 		return 0;
 	}
 
@@ -467,8 +477,13 @@ regular_folio:
 		if (pte_none(ptent))
 			continue;
 
-		if (!pte_present(ptent))
+		if (!pte_present(ptent)) {
+			entry = pte_to_swp_entry(ptent);
+			if (!non_swap_entry(entry))
+				trace_android_vh_madvise_pageout_swap_entry(entry,
+					swp_swapcount(entry), NULL);
 			continue;
+		}
 
 		folio = vm_normal_folio(vma, addr, ptent);
 		if (!folio || folio_is_zone_device(folio))
@@ -492,12 +507,17 @@ regular_folio:
 
 			nr = madvise_folio_pte_batch(addr, end, folio, pte,
 						     ptent, &any_young, NULL);
+
 			if (any_young)
 				ptent = pte_mkyoung(ptent);
 
 			if (nr < folio_nr_pages(folio)) {
 				int err;
+				bool bypass = false;
 
+				trace_android_vh_split_large_folio_bypass(&bypass);
+				if (bypass)
+					continue;
 				if (folio_likely_mapped_shared(folio))
 					continue;
 				if (pageout_anon_only_filter && !folio_test_anon(folio))
@@ -567,7 +587,7 @@ regular_folio:
 		pte_unmap_unlock(start_pte, ptl);
 	}
 	if (pageout)
-		reclaim_pages(&folio_list, true);
+		__reclaim_pages(&folio_list, true, private->private);
 	cond_resched();
 
 	return 0;
@@ -616,7 +636,7 @@ static long madvise_cold(struct vm_area_struct *vma,
 	return 0;
 }
 
-static void madvise_pageout_page_range(struct mmu_gather *tlb,
+static int madvise_pageout_page_range(struct mmu_gather *tlb,
 			     struct vm_area_struct *vma,
 			     unsigned long addr, unsigned long end)
 {
@@ -624,10 +644,20 @@ static void madvise_pageout_page_range(struct mmu_gather *tlb,
 		.pageout = true,
 		.tlb = tlb,
 	};
+	int ret;
+	LIST_HEAD(folio_list);
+
+	trace_android_rvh_madvise_pageout_begin(&walk_private.private);
 
 	tlb_start_vma(tlb, vma);
-	walk_page_range(vma->vm_mm, addr, end, &cold_walk_ops, &walk_private);
+	ret = walk_page_range(vma->vm_mm, addr, end, &cold_walk_ops, &walk_private);
 	tlb_end_vma(tlb, vma);
+
+	trace_android_rvh_madvise_pageout_end(walk_private.private, &folio_list);
+	if (!list_empty(&folio_list))
+		reclaim_pages(&folio_list, true);
+
+	return ret;
 }
 
 static long madvise_pageout(struct vm_area_struct *vma,
@@ -636,6 +666,8 @@ static long madvise_pageout(struct vm_area_struct *vma,
 {
 	struct mm_struct *mm = vma->vm_mm;
 	struct mmu_gather tlb;
+	int ret;
+	bool return_error = false;
 
 	*prev = vma;
 	if (!can_madv_lru_vma(vma))
@@ -653,8 +685,12 @@ static long madvise_pageout(struct vm_area_struct *vma,
 
 	lru_add_drain();
 	tlb_gather_mmu(&tlb, mm);
-	madvise_pageout_page_range(&tlb, vma, start_addr, end_addr);
+	ret = madvise_pageout_page_range(&tlb, vma, start_addr, end_addr);
 	tlb_finish_mmu(&tlb);
+
+	trace_android_vh_madvise_pageout_return_error(ret, &return_error);
+	if (return_error)
+		return (long)ret;
 
 	return 0;
 }
@@ -945,7 +981,16 @@ static long madvise_dontneed_free(struct vm_area_struct *vma,
 			 */
 			end = vma->vm_end;
 		}
-		VM_WARN_ON(start >= end);
+		/*
+		 * If the memory region between start and end was
+		 * originally backed by 4kB pages and then remapped to
+		 * be backed by hugepages while mmap_lock was dropped,
+		 * the adjustment for hugetlb vma above may have rounded
+		 * end down to the start address.
+		 */
+		if (start == end)
+			return 0;
+		VM_WARN_ON(start > end);
 	}
 
 	if (behavior == MADV_DONTNEED || behavior == MADV_DONTNEED_LOCKED)
@@ -1062,6 +1107,9 @@ static int madvise_vma_behavior(struct vm_area_struct *vma,
 	int error;
 	struct anon_vma_name *anon_name;
 	unsigned long new_flags = vma->vm_flags;
+
+	if (unlikely(!can_modify_vma_madv(vma, behavior)))
+		return -EPERM;
 
 	switch (behavior) {
 	case MADV_REMOVE:
@@ -1437,6 +1485,7 @@ int madvise_set_anon_name(struct mm_struct *mm, unsigned long start,
  *  -EIO    - an I/O error occurred while paging in data.
  *  -EBADF  - map exists, but area maps something that isn't a file.
  *  -EAGAIN - a kernel resource was temporarily unavailable.
+ *  -EPERM  - memory is sealed.
  */
 int do_madvise(struct mm_struct *mm, unsigned long start, size_t len_in, int behavior)
 {
@@ -1484,6 +1533,7 @@ int do_madvise(struct mm_struct *mm, unsigned long start, size_t len_in, int beh
 	error = madvise_walk_vmas(mm, start, end, behavior,
 			madvise_vma_behavior);
 	blk_finish_plug(&plug);
+
 	if (write)
 		mmap_write_unlock(mm);
 	else
@@ -1494,6 +1544,14 @@ int do_madvise(struct mm_struct *mm, unsigned long start, size_t len_in, int beh
 
 SYSCALL_DEFINE3(madvise, unsigned long, start, size_t, len_in, int, behavior)
 {
+	bool bypass = false;
+	int ret;
+
+	trace_android_rvh_do_madvise_bypass(current->mm, start,
+			len_in, behavior, &ret, &bypass);
+	if (bypass)
+		return ret;
+
 	return do_madvise(current->mm, start, len_in, behavior);
 }
 
@@ -1508,6 +1566,13 @@ SYSCALL_DEFINE5(process_madvise, int, pidfd, const struct iovec __user *, vec,
 	struct mm_struct *mm;
 	size_t total_len;
 	unsigned int f_flags;
+	bool bypass = false;
+	bool return_error = false;
+
+	trace_android_rvh_process_madvise_bypass(pidfd, vec,
+			vlen, behavior, flags, &ret, &bypass);
+	if (bypass)
+		return ret;
 
 	if (flags != 0) {
 		ret = -EINVAL;
@@ -1546,14 +1611,21 @@ SYSCALL_DEFINE5(process_madvise, int, pidfd, const struct iovec __user *, vec,
 	}
 
 	total_len = iov_iter_count(&iter);
+	trace_android_vh_process_madvise_begin(task, behavior);
 
 	while (iov_iter_count(&iter)) {
+		trace_android_vh_process_madvise_iter(task, behavior, &ret);
+		if (ret < 0)
+			break;
 		ret = do_madvise(mm, (unsigned long)iter_iov_addr(&iter),
 					iter_iov_len(&iter), behavior);
 		if (ret < 0)
 			break;
 		iov_iter_advance(&iter, iter_iov_len(&iter));
 	}
+	trace_android_vh_process_madvise_return_error(behavior, ret, &return_error);
+	if (return_error)
+		goto release_mm;
 
 	ret = (total_len - iov_iter_count(&iter)) ? : ret;
 

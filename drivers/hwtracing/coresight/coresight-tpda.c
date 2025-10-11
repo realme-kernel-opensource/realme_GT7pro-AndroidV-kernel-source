@@ -198,14 +198,6 @@ static int tpda_enable(struct coresight_device *csdev,
 
 	mutex_lock(&drvdata->lock);
 
-	if (drvdata->dclk) {
-		ret = clk_prepare_enable(drvdata->dclk);
-		if (ret) {
-			mutex_unlock(&drvdata->lock);
-			return ret;
-		}
-	}
-
 	ret = tpda_alloc_trace_id(csdev);
 	if (ret < 0) {
 		mutex_unlock(&drvdata->lock);
@@ -245,8 +237,6 @@ static void tpda_disable(struct coresight_device *csdev,
 	drvdata->enable = false;
 	atomic_dec(&in->dest_refcnt);
 	tpda_release_trace_id(csdev);
-	if (drvdata->dclk)
-		clk_disable_unprepare(drvdata->dclk);
 	mutex_unlock(&drvdata->lock);
 
 	dev_info(drvdata->dev, "TPDA inport %d disabled\n", in->dest_port);
@@ -797,15 +787,17 @@ static int tpda_probe(struct amba_device *adev, const struct amba_id *id)
 	drvdata->dev = &adev->dev;
 	dev_set_drvdata(dev, drvdata);
 
+	drvdata->atclk = devm_clk_get_optional_enabled(dev, "atclk"); /* optional */
 
+	if (!drvdata->atclk && of_property_read_bool(dev->of_node, "qcom,atclk-dependence")) {
+		dev_err(dev, "atclk is NULL\n");
+		return -EPROBE_DEFER;
+	}
 
-	drvdata->dclk = devm_clk_get(dev, "dynamic_clk");
-	if (!IS_ERR(drvdata->dclk)) {
-		ret = clk_prepare_enable(drvdata->dclk);
-		if (ret)
-			return ret;
-	} else
-		drvdata->dclk = NULL;
+	if (IS_ERR(drvdata->atclk)) {
+		ret = PTR_ERR(drvdata->atclk);
+		return  ret == -ETIMEDOUT ? -EPROBE_DEFER : ret;
+	}
 
 	drvdata->base = devm_ioremap_resource(dev, &adev->res);
 	if (!drvdata->base)
@@ -818,7 +810,7 @@ static int tpda_probe(struct amba_device *adev, const struct amba_id *id)
 		return ret;
 
 	if (!coresight_authstatus_enabled(drvdata->base))
-		goto err;
+		return -EPERM;
 
 	tpda_init_default_data(drvdata);
 
@@ -833,13 +825,36 @@ static int tpda_probe(struct amba_device *adev, const struct amba_id *id)
 		return PTR_ERR(drvdata->csdev);
 
 	pm_runtime_put_sync(&adev->dev);
-	if (drvdata->dclk)
-		clk_disable_unprepare(drvdata->dclk);
 	dev_dbg(drvdata->dev, "TPDA initialized\n");
 	return 0;
-err:
-	return -EPERM;
 }
+
+#ifdef CONFIG_PM
+static int tpda_runtime_suspend(struct device *dev)
+{
+	struct tpda_drvdata *drvdata = dev_get_drvdata(dev);
+
+	if (drvdata && !IS_ERR(drvdata->atclk))
+		clk_disable_unprepare(drvdata->atclk);
+
+	return 0;
+}
+
+static int tpda_runtime_resume(struct device *dev)
+{
+	struct tpda_drvdata *drvdata = dev_get_drvdata(dev);
+
+	if (drvdata && !IS_ERR(drvdata->atclk))
+		clk_prepare_enable(drvdata->atclk);
+
+	return 0;
+}
+#endif
+
+static const struct dev_pm_ops tpda_dev_pm_ops = {
+	SET_RUNTIME_PM_OPS(tpda_runtime_suspend,
+			   tpda_runtime_resume, NULL)
+};
 
 static void __exit tpda_remove(struct amba_device *adev)
 {
@@ -862,6 +877,7 @@ static struct amba_driver tpda_driver = {
 	.drv = {
 		.name   = "coresight-tpda",
 		.owner	= THIS_MODULE,
+		.pm = &tpda_dev_pm_ops,
 		.suppress_bind_attrs = true,
 	},
 	.probe          = tpda_probe,

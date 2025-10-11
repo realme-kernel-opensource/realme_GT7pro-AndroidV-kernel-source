@@ -78,6 +78,8 @@ struct inode *ceph_new_inode(struct inode *dir, struct dentry *dentry,
 	if (!inode)
 		return ERR_PTR(-ENOMEM);
 
+	inode->i_blkbits = CEPH_FSCRYPT_BLOCK_SHIFT;
+
 	if (!S_ISLNK(*mode)) {
 		err = ceph_pre_init_acls(dir, mode, as_ctx);
 		if (err < 0)
@@ -2319,7 +2321,7 @@ static int fill_fscrypt_truncate(struct inode *inode,
 
 	/* Try to writeback the dirty pagecaches */
 	if (issued & (CEPH_CAP_FILE_BUFFER)) {
-		loff_t lend = orig_pos + CEPH_FSCRYPT_BLOCK_SHIFT - 1;
+		loff_t lend = orig_pos + CEPH_FSCRYPT_BLOCK_SIZE - 1;
 
 		ret = filemap_write_and_wait_range(inode->i_mapping,
 						   orig_pos, lend);

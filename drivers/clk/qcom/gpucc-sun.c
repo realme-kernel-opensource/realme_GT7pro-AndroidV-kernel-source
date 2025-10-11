@@ -65,6 +65,7 @@ static struct clk_alpha_pll gpu_cc_pll0 = {
 	.vco_table = taycan_elu_vco,
 	.num_vco = ARRAY_SIZE(taycan_elu_vco),
 	.regs = clk_alpha_pll_regs[CLK_ALPHA_PLL_TYPE_TAYCAN_ELU],
+	.flags = DISABLE_TO_OFF,
 	.clkr = {
 		.hw.init = &(const struct clk_init_data) {
 			.name = "gpu_cc_pll0",
@@ -409,7 +410,7 @@ static struct gdsc gpu_cc_cx_gdsc = {
 	.gds_hw_ctrl = 0x9094,
 	.en_rest_wait_val = 0x2,
 	.en_few_wait_val = 0x2,
-	.clk_dis_wait_val = 0xf,
+	.clk_dis_wait_val = 0x8,
 	.pd = {
 		.name = "gpu_cc_cx_gdsc",
 	},
@@ -418,7 +419,7 @@ static struct gdsc gpu_cc_cx_gdsc = {
 	.supply = "vdd_cx",
 };
 
-static int gdsc_cx_smmu_do_nothing(struct generic_pm_domain *domain)
+static int gdsc_cx_do_nothing(struct generic_pm_domain *domain)
 {
 	return 0;
 }
@@ -431,8 +432,24 @@ static struct gdsc gpu_cc_cx_smmu_gdsc = {
 	.clk_dis_wait_val = 0xf,
 	.pd = {
 		.name = "gpu_cc_cx_smmu_gdsc",
-		.power_on = gdsc_cx_smmu_do_nothing,
-		.power_off = gdsc_cx_smmu_do_nothing,
+		.power_on = gdsc_cx_do_nothing,
+		.power_off = gdsc_cx_do_nothing,
+	},
+	.pwrsts = PWRSTS_OFF_ON,
+	.flags = RETAIN_FF_ENABLE | VOTABLE,
+	.parent = &gpu_cc_cx_gdsc.pd,
+};
+
+static struct gdsc gpu_cc_cx_gmu_gdsc = {
+	.gdscr = 0x9080,
+	.gds_hw_ctrl = 0x9094,
+	.en_rest_wait_val = 0x2,
+	.en_few_wait_val = 0x2,
+	.clk_dis_wait_val = 0x8,
+	.pd = {
+		.name = "gpu_cc_cx_gmu_gdsc",
+		.power_on = gdsc_cx_do_nothing,
+		.power_off = gdsc_cx_do_nothing,
 	},
 	.pwrsts = PWRSTS_OFF_ON,
 	.flags = RETAIN_FF_ENABLE | VOTABLE,
@@ -477,6 +494,7 @@ static struct clk_regmap *gpu_cc_sun_clocks[] = {
 static struct gdsc *gpu_cc_sun_gdscs[] = {
 	[GPU_CC_CX_GDSC] = &gpu_cc_cx_gdsc,
 	[GPU_CC_CX_SMMU_GDSC] = &gpu_cc_cx_smmu_gdsc,
+	[GPU_CC_CX_GMU_GDSC] = &gpu_cc_cx_gmu_gdsc,
 };
 
 static struct gdsc *gx_clkctl_gdscs[] = {

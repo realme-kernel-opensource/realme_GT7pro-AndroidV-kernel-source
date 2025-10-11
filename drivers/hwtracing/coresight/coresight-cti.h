@@ -168,6 +168,9 @@ struct cti_config {
 	int enable_req_count;
 	bool hw_enabled;
 	bool hw_powered;
+#if defined(CONFIG_DEEPSLEEP) || defined(CONFIG_HIBERNATION)
+	bool hw_enabled_store;
+#endif
 
 	/* registered triggers and filtering */
 	DECLARE_BITMAP(trig_in_use, CTIINOUTEN_MAX);
@@ -199,7 +202,7 @@ struct cti_pctrl {
  * @config:	Configuration data for this CTI device.
  * @node:	List entry of this device in the list of CTI devices.
  * @csdev_release: release function for underlying coresight_device.
- * @dclk:	optional clock to be dynamically enabled when CTI device is enabled.
+ * @atclk:	optional clock for the core parts of the CTI.
  */
 struct cti_drvdata {
 	void __iomem *base;
@@ -212,7 +215,7 @@ struct cti_drvdata {
 	bool	extended_cti;
 	struct cti_pctrl		*gpio_trigin;
 	struct cti_pctrl		*gpio_trigout;
-	struct clk			*dclk;
+	struct clk			*atclk;
 };
 
 /*

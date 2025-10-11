@@ -2,7 +2,7 @@
 
 //! Kernel errors.
 //!
-//! C header: [`include/uapi/asm-generic/errno-base.h`](srctree/include/uapi/asm-generic/errno-base.h)
+//! C header: [`include/uapi/asm-generic/errno-base.h`](../../../include/uapi/asm-generic/errno-base.h)
 
 use crate::str::CStr;
 
@@ -103,7 +103,7 @@ impl Error {
         if errno < -(bindings::MAX_ERRNO as i32) || errno >= 0 {
             // TODO: Make it a `WARN_ONCE` once available.
             crate::pr_warn!(
-                "attempted to create `Error` with out of range `errno`: {}",
+                "attempted to create `Error` with out of range `errno`: {}\n",
                 errno
             );
             return code::EINVAL;
@@ -335,7 +335,3 @@ where
         Err(e) => T::from(e.to_errno() as i16),
     }
 }
-
-/// Error message for calling a default function of a [`#[vtable]`](macros::vtable) trait.
-pub const VTABLE_DEFAULT_ERROR: &str =
-    "This function must not be called, see the #[vtable] documentation.";

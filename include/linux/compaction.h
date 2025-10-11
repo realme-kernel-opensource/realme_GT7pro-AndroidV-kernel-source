@@ -80,6 +80,11 @@ static inline unsigned long compact_gap(unsigned int order)
 	return 2UL << order;
 }
 
+static inline int current_is_kcompactd(void)
+{
+	return current->flags & PF_KCOMPACTD;
+}
+
 #ifdef CONFIG_COMPACTION
 
 extern unsigned int extfrag_for_order(struct zone *zone, unsigned int order);
@@ -103,7 +108,7 @@ extern void __meminit kcompactd_stop(int nid);
 extern void wakeup_kcompactd(pg_data_t *pgdat, int order, int highest_zoneidx);
 extern unsigned long isolate_and_split_free_page(struct page *page,
 				struct list_head *list);
-
+extern void compact_node_async(int nid);
 #else
 static inline void reset_isolation_suitable(pg_data_t *pgdat)
 {

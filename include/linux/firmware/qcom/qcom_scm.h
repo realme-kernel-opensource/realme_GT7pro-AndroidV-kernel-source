@@ -207,6 +207,7 @@ extern int qcom_scm_kgsl_set_smmu_aperture(
 extern int qcom_scm_kgsl_set_smmu_lpac_aperture(
 				unsigned int num_context_bank);
 extern int qcom_scm_kgsl_init_regs(u32 gpu_req);
+extern int qcom_scm_kgsl_dcvs_tuning(u32 mingap, u32 penalty, u32 numbusy);
 extern int qcom_scm_enable_shm_bridge(void);
 extern int qcom_scm_delete_shm_bridge(u64 handle);
 extern int qcom_scm_create_shm_bridge(u64 pfn_and_ns_perm_flags,

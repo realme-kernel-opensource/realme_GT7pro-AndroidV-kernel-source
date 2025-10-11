@@ -143,7 +143,7 @@ static int remote_etm_enable(struct coresight_device *csdev,
 	}
 
 	for (i = 0; i < drvdata->num_trcid; i++)
-		coresight_csr_set_etr_atid(csdev, drvdata->traceids[i], true);
+		coresight_csr_set_etr_atid(csdev, drvdata->traceids[i], true, NULL);
 
 	ret = qmi_enable_remote_etm(drvdata);
 	if (ret) {
@@ -157,7 +157,7 @@ static int remote_etm_enable(struct coresight_device *csdev,
 
 error:
 	for (i = 0; i < drvdata->num_trcid; i++) {
-		coresight_csr_set_etr_atid(csdev, drvdata->traceids[i], false);
+		coresight_csr_set_etr_atid(csdev, drvdata->traceids[i], false, NULL);
 		if (drvdata->static_atid)
 			coresight_trace_id_free_reserved_id(drvdata->traceids[i]);
 	}
@@ -179,7 +179,7 @@ static void remote_etm_disable(struct coresight_device *csdev,
 	qmi_disable_remote_etm(drvdata);
 
 	for (i = 0; i < drvdata->num_trcid; i++)
-		coresight_csr_set_etr_atid(csdev, drvdata->traceids[i], false);
+		coresight_csr_set_etr_atid(csdev, drvdata->traceids[i], false, NULL);
 
 	for (i = 0; i < drvdata->num_trcid; i++) {
 		if (drvdata->static_atid)

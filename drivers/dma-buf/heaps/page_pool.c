@@ -15,6 +15,7 @@
 #include <linux/spinlock.h>
 #include <linux/swap.h>
 #include <linux/sched/signal.h>
+#include <trace/hooks/dmabuf.h>
 
 /* page types we track in the pool */
 enum {
@@ -126,7 +127,13 @@ EXPORT_SYMBOL_GPL(dmabuf_page_pool_alloc);
 
 void dmabuf_page_pool_free(struct dmabuf_page_pool *pool, struct page *page)
 {
+	bool bypass = false;
+
 	if (WARN_ON(pool->order != compound_order(page)))
+		return;
+
+	trace_android_vh_dmabuf_page_pool_free_bypass(page, &bypass);
+	if (bypass)
 		return;
 
 	dmabuf_page_pool_add(pool, page);
@@ -155,7 +162,7 @@ struct dmabuf_page_pool *dmabuf_page_pool_create(gfp_t gfp_mask, unsigned int or
 		pool->count[i] = 0;
 		INIT_LIST_HEAD(&pool->items[i]);
 	}
-	pool->gfp_mask = gfp_mask | __GFP_COMP;
+	pool->gfp_mask = gfp_mask | (order ? __GFP_COMP : 0);
 	pool->order = order;
 	spin_lock_init(&pool->lock);
 

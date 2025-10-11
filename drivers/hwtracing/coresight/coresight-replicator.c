@@ -43,7 +43,6 @@ static DEFINE_SPINLOCK(delay_lock);
  * @spinlock:	serialize enable/disable operations.
  * @check_idfilter_val: check if the context is lost upon clock removal.
  * @delayed:	parameter for delayed probe.
- * @dclk:	optional clock to be dynamically enabled when this device is enabled.
  */
 struct replicator_drvdata {
 	void __iomem		*base;
@@ -52,7 +51,6 @@ struct replicator_drvdata {
 	spinlock_t		spinlock;
 	bool			check_idfilter_val;
 	struct delay_probe_arg	*delayed;
-	struct clk		*dclk;
 	struct pm_config	pm_config;
 	struct list_head	link;
 };
@@ -137,12 +135,6 @@ static int replicator_enable(struct coresight_device *csdev,
 	unsigned long flags;
 	bool first_enable = false;
 
-	if (drvdata->dclk) {
-		rc = clk_prepare_enable(drvdata->dclk);
-		if (rc)
-			return rc;
-	}
-
 	spin_lock_irqsave(&drvdata->spinlock, flags);
 
 	if (!drvdata->pm_config.hw_powered) {
@@ -161,13 +153,6 @@ static int replicator_enable(struct coresight_device *csdev,
 		atomic_inc(&out->src_refcnt);
 out:
 	spin_unlock_irqrestore(&drvdata->spinlock, flags);
-
-	if (first_enable)
-		dev_dbg(&csdev->dev, "REPLICATOR enabled\n");
-
-	if (rc && drvdata->dclk)
-		clk_disable_unprepare(drvdata->dclk);
-
 	return rc;
 }
 
@@ -221,8 +206,6 @@ static void replicator_disable(struct coresight_device *csdev,
 	}
 out:
 	spin_unlock_irqrestore(&drvdata->spinlock, flags);
-	if (drvdata->dclk)
-		clk_disable_unprepare(drvdata->dclk);
 
 	if (last_disable)
 		dev_dbg(&csdev->dev, "REPLICATOR disabled\n");
@@ -250,14 +233,6 @@ static ssize_t replicator_reg_show(struct device *dev,
 	if (ret < 0)
 		return ret;
 
-	if (drvdata->dclk) {
-		ret = clk_prepare_enable(drvdata->dclk);
-		if (ret) {
-			pm_runtime_put_sync(dev->parent);
-			return ret;
-		}
-	}
-
 	spin_lock(&drvdata->spinlock);
 
 	if (!drvdata->pm_config.hw_powered) {
@@ -266,13 +241,10 @@ static ssize_t replicator_reg_show(struct device *dev,
 	}
 
 	val = readl_relaxed(drvdata->base + cs_attr->off);
-
 out:
 	spin_unlock(&drvdata->spinlock);
-
 	pm_runtime_put_sync(dev->parent);
-	if (drvdata->dclk)
-		clk_disable_unprepare(drvdata->dclk);
+
 	if (ret)
 		return ret;
 	else
@@ -327,19 +299,16 @@ static int replicator_add_coresight_dev(struct device *dev, struct resource *res
 		return -ENOMEM;
 
 	drvdata->atclk = devm_clk_get(dev, "atclk"); /* optional */
+	if (IS_ERR(drvdata->atclk) &&
+			of_property_read_bool(dev->of_node, "qcom,atclk-dependence")) {
+		dev_err(dev, "atclk is NULL\n");
+		return -EPROBE_DEFER;
+	}
 	if (!IS_ERR(drvdata->atclk)) {
 		ret = clk_prepare_enable(drvdata->atclk);
 		if (ret)
-			return ret;
+			return ret == -ETIMEDOUT ? -EPROBE_DEFER : ret;
 	}
-
-	drvdata->dclk = devm_clk_get(dev, "dynamic_clk");
-	if (!IS_ERR(drvdata->dclk)) {
-		ret = clk_prepare_enable(drvdata->dclk);
-		if (ret)
-			return ret;
-	} else
-		drvdata->dclk = NULL;
 
 	/*
 	 * Map the device base for dynamic-replicator, which has been
@@ -384,9 +353,6 @@ static int replicator_add_coresight_dev(struct device *dev, struct resource *res
 	replicator_reset(drvdata);
 	pm_runtime_put_sync(dev);
 	drvdata->pm_config.hw_powered = true;
-
-	if (drvdata->dclk)
-		clk_disable_unprepare(drvdata->dclk);
 
 out_disable_clk:
 	if (ret && !IS_ERR_OR_NULL(drvdata->atclk))

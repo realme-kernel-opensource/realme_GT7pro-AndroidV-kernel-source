@@ -39,9 +39,9 @@ int kvm_iommu_attach_dev(pkvm_handle_t iommu_id, pkvm_handle_t domain_id,
 			 u32 endpoint_id, u32 pasid, u32 pasid_bits);
 int kvm_iommu_detach_dev(pkvm_handle_t iommu_id, pkvm_handle_t domain_id,
 			 u32 endpoint_id, u32 pasid);
-size_t kvm_iommu_map_pages(pkvm_handle_t domain_id,
-			   unsigned long iova, phys_addr_t paddr, size_t pgsize,
-			   size_t pgcount, int prot);
+int kvm_iommu_map_pages(pkvm_handle_t domain_id, unsigned long iova,
+			phys_addr_t paddr, size_t pgsize,
+			size_t pgcount, int prot, unsigned long *mapped);
 size_t kvm_iommu_unmap_pages(pkvm_handle_t domain_id,
 			     unsigned long iova, size_t pgsize, size_t pgcount);
 phys_addr_t kvm_iommu_iova_to_phys(pkvm_handle_t domain_id, unsigned long iova);
@@ -69,6 +69,8 @@ struct kvm_iommu_paddr_cache {
 	u64		paddr[KVM_IOMMU_PADDR_CACHE_MAX];
 	size_t		pgsize[KVM_IOMMU_PADDR_CACHE_MAX];
 };
+
+void kvm_iommu_flush_unmap_cache(struct kvm_iommu_paddr_cache *cache);
 
 /**
  * struct kvm_iommu_ops - KVM iommu ops

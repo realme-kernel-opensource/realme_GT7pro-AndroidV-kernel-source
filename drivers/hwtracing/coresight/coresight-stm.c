@@ -221,11 +221,11 @@ static int stm_enable(struct coresight_device *csdev, struct perf_event *event,
 			return ret;
 		}
 	}
-	coresight_csr_set_etr_atid(csdev, drvdata->traceid, true);
+	coresight_csr_set_etr_atid(csdev, drvdata->traceid, true, NULL);
 
 	ret = pm_runtime_resume_and_get(csdev->dev.parent);
 	if (ret < 0) {
-		coresight_csr_set_etr_atid(csdev, drvdata->traceid, false);
+		coresight_csr_set_etr_atid(csdev, drvdata->traceid, false, NULL);
 		local_set(&drvdata->mode, CS_MODE_DISABLED);
 		return ret;
 	}
@@ -297,7 +297,7 @@ static void stm_disable(struct coresight_device *csdev,
 
 		pm_runtime_put_sync(csdev->dev.parent);
 
-		coresight_csr_set_etr_atid(csdev, drvdata->traceid, false);
+		coresight_csr_set_etr_atid(csdev, drvdata->traceid, false, NULL);
 		if (drvdata->static_atid)
 			coresight_trace_id_free_reserved_id(drvdata->traceid);
 		local_set(&drvdata->mode, CS_MODE_DISABLED);

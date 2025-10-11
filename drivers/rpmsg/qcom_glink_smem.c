@@ -47,6 +47,10 @@ struct qcom_glink_smem {
 	struct mbox_chan *mbox_chan;
 
 	u32 remote_pid;
+	volatile u32 last_avail_tail;
+	volatile u32 last_update_tail;
+	volatile u32 last_read_tail;
+	volatile u32 last_data;
 };
 /* Define IPC Logging Macros */
 #define GLINK_SMEM_IPC_LOG_PAGE_CNT 32
@@ -92,6 +96,7 @@ static size_t glink_smem_rx_avail(struct qcom_glink_pipe *np)
 
 	head = le32_to_cpu(*pipe->head);
 	tail = le32_to_cpu(*pipe->tail);
+	pipe->smem->last_avail_tail = tail;
 
 	if (head < tail)
 		len = pipe->native.length - tail + head;
@@ -123,10 +128,12 @@ static void glink_smem_rx_peek(struct qcom_glink_pipe *np,
 		tail -= pipe->native.length;
 
 	/* Update the tail pointer and add a memory barrier to ensure
-	 * consistent read/write between the APPS and the remote.
-	 * This prevents the APPS from reading stale data from the FIFO.
-	 */
+	* consistent read/write between the APPS and the remote.
+	* This prevents the APPS from reading stale data from the FIFO.
+	*/
 	mb();
+
+	pipe->smem->last_read_tail = tail;
 
 	len = min_t(size_t, count, pipe->native.length - tail);
 	if (len)
@@ -141,6 +148,7 @@ static void glink_smem_rx_peek(struct qcom_glink_pipe *np,
 	if (count > 1)
 		GLINK_SMEM_INFO("RX: remote-pid=%d, head=0x%x, tail=0x%x, [%02x %02x]\n",
 			smem->remote_pid, le32_to_cpu(*pipe->head), tail, bytedata[1], bytedata[0]);
+	pipe->smem->last_data = *(u32*)data;
 }
 
 static void glink_smem_rx_advance(struct qcom_glink_pipe *np,
@@ -155,6 +163,7 @@ static void glink_smem_rx_advance(struct qcom_glink_pipe *np,
 	if (tail >= pipe->native.length)
 		tail %= pipe->native.length;
 
+	pipe->smem->last_update_tail = tail;
 	*pipe->tail = cpu_to_le32(tail);
 }
 
@@ -410,6 +419,18 @@ int qcom_glink_smem_start(struct qcom_glink_smem *smem)
 	return qcom_glink_native_start(smem->glink);
 }
 EXPORT_SYMBOL(qcom_glink_smem_start);
+
+#if 1
+/* Merge CR3964917 for fix ALM[8638837] */
+void qcom_glink_smem_early_ssr_notify(void *data)
+{
+	struct qcom_glink_smem *smem = data;
+
+	if (smem->glink)
+		qcom_glink_early_ssr_notify(smem->glink);
+}
+EXPORT_SYMBOL_GPL(qcom_glink_smem_early_ssr_notify);
+#endif
 
 void qcom_glink_smem_unregister(struct qcom_glink_smem *smem)
 {

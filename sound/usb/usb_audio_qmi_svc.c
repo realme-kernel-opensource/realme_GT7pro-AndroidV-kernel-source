@@ -972,6 +972,10 @@ static void uaudio_connect(struct snd_usb_audio *chip)
 
 	uadev[chip->card->number].chip = chip;
 	uadev[chip->card->number].sb = sb;
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	uaudio_info("WA for hang headset!");
+	uadev[chip->card->number].chip->quirk_flags |= QUIRK_FLAG_CTL_MSG_DELAY_1M;
+#endif
 }
 
 static void uaudio_disconnect(struct snd_usb_audio *chip)
@@ -1039,9 +1043,9 @@ done:
 	if (dev->sb)
 		xhci_sideband_unregister(dev->sb);
 
-	mutex_unlock(&chip->mutex);
 	uadev[card_num].chip = NULL;
 	uadev[card_num].sb = NULL;
+	mutex_unlock(&chip->mutex);
 }
 
 static void uaudio_dev_release(struct kref *kref)

@@ -375,7 +375,6 @@ static __init int sched_init_debug(void)
 #endif
 
 	debugfs_create_file("debug", 0444, debugfs_sched, NULL, &sched_debug_fops);
-
 	return 0;
 }
 late_initcall(sched_init_debug);
@@ -1095,6 +1094,8 @@ void proc_sched_show_task(struct task_struct *p, struct pid_namespace *ns,
 	if (task_has_dl_policy(p)) {
 		P(dl.runtime);
 		P(dl.deadline);
+	} else if (fair_policy(p->policy)) {
+		P(se.slice);
 	}
 #undef PN_SCHEDSTAT
 #undef P_SCHEDSTAT

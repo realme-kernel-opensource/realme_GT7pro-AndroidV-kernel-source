@@ -85,6 +85,7 @@ static bool lpm_disallowed(s64 sleep_ns, int cpu)
 #endif
 	return false;
 }
+EXPORT_TRACEPOINT_SYMBOL_GPL(android_vh_scx_sched_lpm_disallowed_time);
 
 /**
  * histtimer_fn() - Will be executed when per cpu prediction timer expires

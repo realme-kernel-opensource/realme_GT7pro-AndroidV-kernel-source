@@ -35,7 +35,7 @@ struct tpda_drvdata {
 	uint32_t		freq_req_val;
 	bool			freq_req;
 	bool			cmbchan_mode;
-	struct clk		*dclk;
+	struct clk		*atclk;
 };
 
 

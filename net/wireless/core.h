@@ -160,6 +160,12 @@ extern struct workqueue_struct *cfg80211_wq;
 extern struct list_head cfg80211_rdev_list;
 extern int cfg80211_rdev_list_generation;
 
+enum bss_source_type {
+	BSS_SOURCE_DIRECT = 0,
+	BSS_SOURCE_MBSSID,
+	BSS_SOURCE_STA_PROFILE,
+};
+
 struct cfg80211_internal_bss {
 	struct list_head list;
 	struct list_head hidden_list;
@@ -180,6 +186,8 @@ struct cfg80211_internal_bss {
 	 * when the beacon/probe was received.
 	 */
 	u8 parent_bssid[ETH_ALEN] __aligned(2);
+
+	enum bss_source_type bss_source;
 
 	/* must be last because of priv member */
 	struct cfg80211_bss pub;
@@ -276,7 +284,7 @@ struct cfg80211_event {
 			struct ieee80211_channel *channel;
 		} ij;
 		struct {
-			u8 bssid[ETH_ALEN];
+			u8 peer_addr[ETH_ALEN];
 			const u8 *td_bitmap;
 			u8 td_bitmap_len;
 		} pa;
@@ -423,7 +431,7 @@ int cfg80211_disconnect(struct cfg80211_registered_device *rdev,
 			bool wextev);
 void __cfg80211_roamed(struct wireless_dev *wdev,
 		       struct cfg80211_roam_info *info);
-void __cfg80211_port_authorized(struct wireless_dev *wdev, const u8 *bssid,
+void __cfg80211_port_authorized(struct wireless_dev *wdev, const u8 *peer_addr,
 				const u8 *td_bitmap, u8 td_bitmap_len);
 int cfg80211_mgd_wext_connect(struct cfg80211_registered_device *rdev,
 			      struct wireless_dev *wdev);

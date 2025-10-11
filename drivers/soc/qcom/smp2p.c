@@ -278,6 +278,12 @@ static void qcom_smp2p_notify_in(struct qcom_smp2p *smp2p)
 
 		SMP2P_INFO("%d:\t%s: status:%0lx val:%0x\n",
 			   smp2p->remote_pid, entry->name, status, val);
+		// #ifdef OPLUS_FEATURE_SENSOR_WAKEUP_INFO
+		if (!strcmp(entry->name, "sleepstate_see")) {
+			dev_err(smp2p->dev, "%d:\t%s: status:%0lx val:%0x\n",
+				   smp2p->remote_pid, entry->name, status, val);
+		}
+		// #endif // OPLUS_FEATURE_SENSOR_WAKEUP_INFO
 
 		/* No changes of this entry? */
 		if (!status)

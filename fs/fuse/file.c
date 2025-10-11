@@ -15,6 +15,7 @@
 #include <linux/sched.h>
 #include <linux/sched/signal.h>
 #include <linux/module.h>
+#include <linux/splice.h>
 #include <linux/swap.h>
 #include <linux/falloc.h>
 #include <linux/uio.h>
@@ -270,7 +271,7 @@ int fuse_open_common(struct inode *inode, struct file *file, bool isdir)
 
 	if (dax_truncate) {
 		filemap_invalidate_lock(inode->i_mapping);
-		err = fuse_dax_break_layouts(inode, 0, 0);
+		err = fuse_dax_break_layouts(inode, 0, -1);
 		if (err)
 			goto out_inode_unlock;
 	}
@@ -1833,10 +1834,16 @@ __acquires(fi->lock)
 	fuse_writepage_finish(fm, wpa);
 	spin_unlock(&fi->lock);
 
-	/* After fuse_writepage_finish() aux request list is private */
+	/* After rb_erase() aux request list is private */
 	for (aux = wpa->next; aux; aux = next) {
+		struct backing_dev_info *bdi = inode_to_bdi(aux->inode);
+
 		next = aux->next;
 		aux->next = NULL;
+
+		dec_wb_stat(&bdi->wb, WB_WRITEBACK);
+		dec_node_page_state(aux->ia.ap.pages[0], NR_WRITEBACK_TEMP);
+		wb_writeout_inc(&bdi->wb);
 		fuse_writepage_free(aux);
 	}
 
@@ -2768,15 +2775,37 @@ static int fuse_file_flock(struct file *file, int cmd, struct file_lock *fl)
 static ssize_t fuse_splice_read(struct file *in, loff_t *ppos,
 		struct pipe_inode_info *pipe, size_t len, unsigned int flags)
 {
-#ifdef CONFIG_FUSE_BPF
 	struct fuse_file *ff = in->private_data;
 
+#ifdef CONFIG_FUSE_BPF
 	/* TODO - this is simply passthrough, not a proper BPF filter */
 	if (ff->backing_file)
 		return fuse_splice_read_backing(in, ppos, pipe, len, flags);
 #endif
 
-	return filemap_splice_read(in, ppos, pipe, len, flags);
+	/* FOPEN_DIRECT_IO overrides FOPEN_PASSTHROUGH */
+	if (ff->passthrough.filp && !(ff->open_flags & FOPEN_DIRECT_IO))
+		return fuse_passthrough_splice_read(in, ppos, pipe, len, flags);
+	else
+		return filemap_splice_read(in, ppos, pipe, len, flags);
+}
+
+static ssize_t fuse_splice_write(struct pipe_inode_info *pipe, struct file *out,
+				 loff_t *ppos, size_t len, unsigned int flags)
+{
+	struct fuse_file *ff = out->private_data;
+
+#ifdef CONFIG_FUSE_BPF
+	/* TODO - this is simply passthrough, not a proper BPF filter */
+	if (ff->backing_file)
+		return fuse_splice_write_backing(pipe, out, ppos, len, flags);
+#endif
+
+	/* FOPEN_DIRECT_IO overrides FOPEN_PASSTHROUGH */
+	if (ff->passthrough.filp && !(ff->open_flags & FOPEN_DIRECT_IO))
+		return fuse_passthrough_splice_write(pipe, out, ppos, len, flags);
+	else
+		return iter_file_splice_write(pipe, out, ppos, len, flags);
 }
 
 static sector_t fuse_bmap(struct address_space *mapping, sector_t block)
@@ -3180,7 +3209,7 @@ static long fuse_file_fallocate(struct file *file, int mode, loff_t offset,
 	inode_lock(inode);
 	if (block_faults) {
 		filemap_invalidate_lock(inode->i_mapping);
-		err = fuse_dax_break_layouts(inode, 0, 0);
+		err = fuse_dax_break_layouts(inode, 0, -1);
 		if (err)
 			goto out;
 	}
@@ -3392,7 +3421,7 @@ static const struct file_operations fuse_file_operations = {
 	.get_unmapped_area = thp_get_unmapped_area,
 	.flock		= fuse_file_flock,
 	.splice_read	= fuse_splice_read,
-	.splice_write	= iter_file_splice_write,
+	.splice_write	= fuse_splice_write,
 	.unlocked_ioctl	= fuse_file_ioctl,
 	.compat_ioctl	= fuse_file_compat_ioctl,
 	.poll		= fuse_file_poll,

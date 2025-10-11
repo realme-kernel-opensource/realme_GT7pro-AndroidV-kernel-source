@@ -1068,6 +1068,7 @@ struct msm_pcie_dev_t {
 	void __iomem *mhi;
 	void __iomem *tcsr;
 	void __iomem *rumi;
+	void __iomem *gcc;
 
 	uint32_t axi_bar_start;
 	uint32_t axi_bar_end;
@@ -1761,6 +1762,17 @@ static void pcie_parf_dump(struct msm_pcie_dev_t *dev)
 {
 	int i;
 	u32 original;
+	PCIE_DUMP(dev, "PCIe: RC%d GCC_PCIE_0_AUX_CBCR %x\n", dev->rc_idx, readl_relaxed(dev->gcc + 0x5b044));
+	PCIE_DUMP(dev, "PCIe: RC%d GCC_PCIE_0_CFG_AHB_CBCR %x\n", dev->rc_idx, readl_relaxed(dev->gcc + 0x5b040));
+	PCIE_DUMP(dev, "PCIe: RC%d GCC_PCIE_0_MSTR_AXI_CBCR %x\n", dev->rc_idx, readl_relaxed(dev->gcc + 0x5b030));
+	PCIE_DUMP(dev, "PCIe: RC%d GCC_PCIE_0_SLV_AXI_CBCR %x\n", dev->rc_idx, readl_relaxed(dev->gcc + 0x5b020));
+	PCIE_DUMP(dev, "PCIe: RC%d GCC_PCIE_0_SLV_Q2A_AXI_CBCR %x\n", dev->rc_idx, readl_relaxed(dev->gcc + 0x5b01c));
+	PCIE_DUMP(dev, "PCIe: RC%d GCC_PCIE_0_PHY_RCHNG_CBCR %x\n", dev->rc_idx, readl_relaxed(dev->gcc + 0x5b064));
+	PCIE_DUMP(dev, "PCIe: RC%d GCC_CNOC_PCIE_SF_AXI_CBCR %x\n", dev->rc_idx, readl_relaxed(dev->gcc + 0x58));
+	PCIE_DUMP(dev, "PCIe: RC%d GCC_PCIE_0_PIPE_CBCR %x\n", dev->rc_idx, readl_relaxed(dev->gcc + 0x5b054));
+	PCIE_DUMP(dev, "PCIe: RC%d GCC_DDRSS_PCIE_SF_QTB_CBCR %x\n", dev->rc_idx, readl_relaxed(dev->gcc + 0x7c));
+	PCIE_DUMP(dev, "PCIe: RC%d GCC_AGGRE_NOC_PCIE_AXI_CBCR %x\n", dev->rc_idx, readl_relaxed(dev->gcc + 0x68));
+	PCIE_DUMP(dev, "PCIe: RC%d GCC_PCIE_0_PIPE_MUXR %x\n", dev->rc_idx, readl_relaxed(dev->gcc + 0x5b080));
 
 	PCIE_DUMP(dev, "PCIe: RC%d PARF testbus\n", dev->rc_idx);
 
@@ -5560,6 +5572,7 @@ static int msm_pcie_get_reg(struct msm_pcie_dev_t *pcie_dev)
 	pcie_dev->mhi = pcie_dev->res[MSM_PCIE_RES_MHI].base;
 	pcie_dev->tcsr = pcie_dev->res[MSM_PCIE_RES_TCSR].base;
 	pcie_dev->rumi = pcie_dev->res[MSM_PCIE_RES_RUMI].base;
+	pcie_dev->gcc = ioremap(0x110000, 0x5b100);
 
 	return 0;
 }
@@ -8715,6 +8728,22 @@ invalid_link_width:
 	return -EINVAL;
 }
 
+/*static int msm_pcie_enable_l1(struct pci_dev *pcidev, void *pdev)
+{
+        struct msm_pcie_dev_t *pcie_dev = (struct msm_pcie_dev_t *) pdev;
+	u32 val;
+
+	msm_pcie_config_clear_set_dword(pcidev, pcidev->pcie_cap + PCI_EXP_LNKCTL,
+				        0, PCI_EXP_LNKCTL_ASPM_L1);
+	pci_read_config_dword(pcidev, pcidev->pcie_cap + PCI_EXP_LNKCTL, &val);
+	PCIE_DBG(pcie_dev,
+		 "PCIe: RC%d: PCI device %02x:%02x.%01x [PCI_EXP_LNKCTL]:0x%x\n",
+		  pcie_dev->rc_idx, pcidev->bus->number,
+		  PCI_SLOT(pcidev->devfn), PCI_FUNC(pcidev->devfn), val);
+
+	return 0;
+}*/
+
 int msm_pcie_allow_l1(struct pci_dev *pci_dev)
 {
 	struct pci_dev *root_pci_dev;
@@ -8765,11 +8794,14 @@ int msm_pcie_allow_l1(struct pci_dev *pci_dev)
 	if (pcie_dev->prevent_l1)
 		goto out;
 
+//	pci_walk_bus(pcie_dev->dev*->bus, msm_pcie_enable_l1, pcie_dev);
+	msm_pcie_config_l1_enable_all(pcie_dev);
+
 	msm_pcie_write_mask(pcie_dev->parf + PCIE20_PARF_PM_CTRL, BIT(5), 0);
 	/* enable L1 */
-	msm_pcie_write_mask(pcie_dev->dm_core +
-				(root_pci_dev->pcie_cap + PCI_EXP_LNKCTL),
-				0, PCI_EXP_LNKCTL_ASPM_L1);
+//	msm_pcie_write_mask(pcie_dev->dm_core +
+//				(root_pci_dev->pcie_cap + PCI_EXP_LNKCTL),
+//				0, PCI_EXP_LNKCTL_ASPM_L1);
 
 	PCIE_DBG2(pcie_dev, "PCIe: RC%d: %02x:%02x.%01x: exit\n",
 		pcie_dev->rc_idx, pci_dev->bus->number,
@@ -8782,10 +8814,27 @@ out:
 }
 EXPORT_SYMBOL(msm_pcie_allow_l1);
 
+/*static int msm_pcie_disable_l1(struct pci_dev *pcidev, void *pdev)
+{
+        struct msm_pcie_dev_t *pcie_dev = (struct msm_pcie_dev_t *) pdev;
+	u32 val;
+
+	msm_pcie_config_clear_set_dword(pcidev, pcidev->pcie_cap + PCI_EXP_LNKCTL,
+					PCI_EXP_LNKCTL_ASPM_L1, 0);
+	pci_read_config_dword(pcidev, pcidev->pcie_cap + PCI_EXP_LNKCTL, &val);
+	PCIE_DBG(pcie_dev,
+		 "PCIe: RC%d: PCI device %02x:%02x.%01x [PCI_EXP_LNKCTL]:0x%x\n",
+		  pcie_dev->rc_idx, pcidev->bus->number,
+		  PCI_SLOT(pcidev->devfn), PCI_FUNC(pcidev->devfn), val);
+
+	return 0;
+}*/
+
 int msm_pcie_prevent_l1(struct pci_dev *pci_dev)
 {
 	struct pci_dev *root_pci_dev;
 	struct msm_pcie_dev_t *pcie_dev;
+	struct pci_bus *bus;
 	u32 cnt = 0;
 	u32 cnt_max = 1000; /* 100ms timeout */
 	int ret = 0;
@@ -8795,6 +8844,7 @@ int msm_pcie_prevent_l1(struct pci_dev *pci_dev)
 		return -ENODEV;
 
 	pcie_dev = PCIE_BUS_PRIV_DATA(root_pci_dev->bus);
+	bus = pcie_dev->dev->bus;
 
 	/* disable L1 */
 	mutex_lock(&pcie_dev->setup_lock);
@@ -8828,9 +8878,6 @@ int msm_pcie_prevent_l1(struct pci_dev *pci_dev)
 	if (pcie_dev->prevent_l1++)
 		goto out;
 
-	msm_pcie_write_mask(pcie_dev->dm_core +
-				(root_pci_dev->pcie_cap + PCI_EXP_LNKCTL),
-				PCI_EXP_LNKCTL_ASPM_L1, 0);
 	msm_pcie_write_mask(pcie_dev->parf + PCIE20_PARF_PM_CTRL, 0, BIT(5));
 
 	/* confirm link is in L0/L0s */
@@ -8865,6 +8912,12 @@ int msm_pcie_prevent_l1(struct pci_dev *pci_dev)
 		usleep_range(100, 105);
 	}
 
+	msm_pcie_config_l1_disable_all(pcie_dev, bus);
+	//pci_walk_bus(pcie_dev->dev->bus, msm_pcie_disable_l1, pcie_dev);
+
+//	msm_pcie_write_mask(pcie_dev->dm_core +
+//				(root_pci_dev->pcie_cap + PCI_EXP_LNKCTL),
+//				PCI_EXP_LNKCTL_ASPM_L1, 0);
 	PCIE_DBG2(pcie_dev, "PCIe: RC%d: %02x:%02x.%01x: exit\n",
 		pcie_dev->rc_idx, pci_dev->bus->number,
 		PCI_SLOT(pci_dev->devfn), PCI_FUNC(pci_dev->devfn));
@@ -9949,6 +10002,7 @@ static int msm_pcie_drv_resume(struct msm_pcie_dev_t *pcie_dev)
 	mutex_unlock(&pcie_dev->setup_lock);
 	mutex_unlock(&pcie_dev->recovery_lock);
 
+	msm_pcie_check_ep_access(pcie_dev, jiffies + usecs_to_jiffies(EP_UP_TIMEOUT_US));
 	return 0;
 
 out:

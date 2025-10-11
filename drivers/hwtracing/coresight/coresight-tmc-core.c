@@ -286,14 +286,6 @@ static ssize_t coresight_tmc_reg32_show(struct device *dev,
 	if (ret < 0)
 		return ret;
 
-	if (drvdata->dclk) {
-		ret = clk_prepare_enable(drvdata->dclk);
-		if (ret) {
-			pm_runtime_put_sync(dev->parent);
-			return ret;
-		}
-	}
-
 	spin_lock(&drvdata->spinlock);
 	if (!drvdata->pm_config.hw_powered) {
 		ret = -EINVAL;
@@ -303,8 +295,6 @@ static ssize_t coresight_tmc_reg32_show(struct device *dev,
 	val = readl_relaxed(drvdata->base + cs_attr->off);
 out:
 	spin_unlock(&drvdata->spinlock);
-	if (drvdata->dclk)
-		clk_disable_unprepare(drvdata->dclk);
 	pm_runtime_put_sync(dev->parent);
 	if (ret)
 		return ret;
@@ -324,14 +314,6 @@ static ssize_t coresight_tmc_reg64_show(struct device *dev,
 	if (ret < 0)
 		return ret;
 
-	if (drvdata->dclk) {
-		ret = clk_prepare_enable(drvdata->dclk);
-		if (ret) {
-			pm_runtime_put_sync(dev->parent);
-			return ret;
-		}
-	}
-
 	spin_lock(&drvdata->spinlock);
 	if (!drvdata->pm_config.hw_powered) {
 		ret = -EINVAL;
@@ -342,8 +324,6 @@ static ssize_t coresight_tmc_reg64_show(struct device *dev,
 			((u64)readl_relaxed(drvdata->base + cs_attr->hi_off) << 32);
 out:
 	spin_unlock(&drvdata->spinlock);
-	if (drvdata->dclk)
-		clk_disable_unprepare(drvdata->dclk);
 	pm_runtime_put_sync(dev->parent);
 
 	if (ret)
@@ -543,6 +523,39 @@ static ssize_t stop_on_flush_store(struct device *dev,
 }
 static DEVICE_ATTR_RW(stop_on_flush);
 
+static ssize_t mgmt_ctl_show(struct device *dev,
+			struct device_attribute *attr, char *buf)
+{
+	u32 val;
+	struct tmc_drvdata *drvdata = dev_get_drvdata(dev->parent);
+	struct coresight_device *csdev = drvdata->csdev;
+
+	pm_runtime_resume_and_get(csdev->dev.parent);
+	val = csdev_access_relaxed_read32(&csdev->access, 0x20);
+	pm_runtime_put_sync(csdev->dev.parent);
+	return scnprintf(buf, PAGE_SIZE, "%x\n", val);
+}
+
+static ssize_t mgmt_ctl_store(struct device *dev,
+			struct device_attribute *attr,
+			const char *buf, size_t size)
+{
+	unsigned long val;
+	struct tmc_drvdata *drvdata = dev_get_drvdata(dev->parent);
+	struct coresight_device *csdev = drvdata->csdev;
+
+	if ((kstrtoul(buf, 0, &val)) || (val & ~1UL))
+		return -EINVAL;
+
+	pm_runtime_resume_and_get(csdev->dev.parent);
+	csdev_access_relaxed_write32(&csdev->access, (u32)val, 0x20);
+	pm_runtime_put_sync(csdev->dev.parent);
+
+	return size;
+}
+
+static DEVICE_ATTR_RW(mgmt_ctl);
+
 static struct attribute *coresight_tmc_etr_attrs[] = {
 	&dev_attr_trigger_cntr.attr,
 	&dev_attr_buffer_size.attr,
@@ -555,6 +568,7 @@ static struct attribute *coresight_tmc_etr_attrs[] = {
 static struct attribute *coresight_tmc_etf_attrs[] = {
 	&dev_attr_trigger_cntr.attr,
 	&dev_attr_stop_on_flush.attr,
+	&dev_attr_mgmt_ctl.attr,
 	NULL,
 };
 
@@ -687,13 +701,17 @@ static int tmc_add_coresight_dev(struct amba_device *adev, const struct amba_id 
 		goto out;
 	}
 
-	drvdata->dclk = devm_clk_get(dev, "dynamic_clk");
-	if (!IS_ERR(drvdata->dclk)) {
-		ret = clk_prepare_enable(drvdata->dclk);
+	drvdata->atclk = devm_clk_get(dev, "atclk"); /* optional */
+	if (IS_ERR(drvdata->atclk) &&
+			of_property_read_bool(dev->of_node, "qcom,atclk-dependence")) {
+		dev_err(dev, "atclk is NULL\n");
+		return -EPROBE_DEFER;
+	}
+	if (!IS_ERR(drvdata->atclk)) {
+		ret = clk_prepare_enable(drvdata->atclk);
 		if (ret)
-			goto out;
-	} else
-		drvdata->dclk = NULL;
+			return ret == -ETIMEDOUT ? -EPROBE_DEFER : ret;
+	}
 
 	drvdata->base = base;
 	desc.access = CSDEV_ACCESS_IOMEM(base);
@@ -722,7 +740,8 @@ static int tmc_add_coresight_dev(struct amba_device *adev, const struct amba_id 
 		drvdata->csr = coresight_csr_get(drvdata->csr_name);
 		if (IS_ERR(drvdata->csr)) {
 			dev_dbg(dev, "failed to get csr, defer probe\n");
-			return -EPROBE_DEFER;
+			ret = -EPROBE_DEFER;
+			goto out_disable_clk;
 		}
 	}
 
@@ -745,7 +764,7 @@ static int tmc_add_coresight_dev(struct amba_device *adev, const struct amba_id 
 		ret = tmc_etr_setup_caps(dev, devid,
 					 coresight_get_uci_data(id));
 		if (ret)
-			goto out;
+			goto out_disable_clk;
 
 		idr_init(&drvdata->idr);
 		mutex_init(&drvdata->idr_mutex);
@@ -755,7 +774,7 @@ static int tmc_add_coresight_dev(struct amba_device *adev, const struct amba_id 
 
 		ret = tmc_etr_usb_init(adev, drvdata);
 		if (ret)
-			goto out;
+			goto out_disable_clk;
 
 		break;
 	case TMC_CONFIG_TYPE_ETF:
@@ -769,19 +788,19 @@ static int tmc_add_coresight_dev(struct amba_device *adev, const struct amba_id 
 	default:
 		pr_err("%s: Unsupported TMC config\n", desc.name);
 		ret = -EINVAL;
-		goto out;
+		goto out_disable_clk;
 	}
 
 	desc.name = coresight_alloc_device_name(dev_list, dev);
 	if (!desc.name) {
 		ret = -ENOMEM;
-		goto out;
+		goto out_disable_clk;
 	}
 
 	pdata = coresight_get_platform_data(dev);
 	if (IS_ERR(pdata)) {
 		ret = PTR_ERR(pdata);
-		goto out;
+		goto out_disable_clk;
 	}
 	adev->dev.platform_data = pdata;
 	desc.pdata = pdata;
@@ -789,7 +808,11 @@ static int tmc_add_coresight_dev(struct amba_device *adev, const struct amba_id 
 	drvdata->csdev = coresight_register(&desc);
 	if (IS_ERR(drvdata->csdev)) {
 		ret = PTR_ERR(drvdata->csdev);
-		goto out;
+		goto out_disable_clk;
+	}
+
+	if (!strcmp(desc.name, "coresight-tmc-etf")) {
+		byte_cntr_attach_etf(drvdata->csdev);
 	}
 
 	drvdata->miscdev.name = desc.name;
@@ -803,11 +826,39 @@ static int tmc_add_coresight_dev(struct amba_device *adev, const struct amba_id 
 		pm_runtime_put_sync(&adev->dev);
 	}
 
-	if (drvdata->dclk)
-		clk_disable_unprepare(drvdata->dclk);
+out_disable_clk:
+	if (ret && !IS_ERR_OR_NULL(drvdata->atclk))
+		clk_disable_unprepare(drvdata->atclk);
 out:
 	return ret;
 }
+
+#ifdef CONFIG_PM
+static int tmc_runtime_suspend(struct device *dev)
+{
+	struct tmc_drvdata *drvdata = dev_get_drvdata(dev);
+
+	if (drvdata && !IS_ERR(drvdata->atclk))
+		clk_disable_unprepare(drvdata->atclk);
+
+	return 0;
+}
+
+static int tmc_runtime_resume(struct device *dev)
+{
+	struct tmc_drvdata *drvdata = dev_get_drvdata(dev);
+
+	if (drvdata && !IS_ERR(drvdata->atclk))
+		clk_prepare_enable(drvdata->atclk);
+
+	return 0;
+}
+#endif
+
+static const struct dev_pm_ops tmc_dev_pm_ops = {
+	SET_RUNTIME_PM_OPS(tmc_runtime_suspend, tmc_runtime_resume, NULL)
+};
+
 
 static int tmc_cpu_pm_notify(struct notifier_block *nb, unsigned long cmd,
 			      void *v)
@@ -1102,6 +1153,7 @@ static struct amba_driver tmc_driver = {
 		.name   = "coresight-tmc",
 		.owner  = THIS_MODULE,
 		.suppress_bind_attrs = true,
+		.pm = &tmc_dev_pm_ops,
 	},
 	.probe		= tmc_probe,
 	.shutdown	= tmc_shutdown,

@@ -84,6 +84,10 @@ DECLARE_RESTRICTED_HOOK(android_rvh_setscheduler,
 	TP_PROTO(struct task_struct *p),
 	TP_ARGS(p), 1);
 
+DECLARE_RESTRICTED_HOOK(android_rvh_setscheduler_prio,
+	TP_PROTO(struct task_struct *p),
+	TP_ARGS(p), 1);
+
 struct sched_group;
 DECLARE_RESTRICTED_HOOK(android_rvh_find_busiest_group,
 	TP_PROTO(struct sched_group *busiest, struct rq *dst_rq, int *out_balance),
@@ -202,6 +206,11 @@ DECLARE_RESTRICTED_HOOK(android_rvh_util_fits_cpu,
 		int cpu, bool *fits, bool *done),
 	TP_ARGS(util, uclamp_min, uclamp_max, cpu, fits, done), 1);
 
+DECLARE_RESTRICTED_HOOK(android_rvh_update_cpus_allowed,
+	TP_PROTO(struct task_struct *p, cpumask_var_t cpus_requested,
+		 const struct cpumask *new_mask, int *ret),
+	TP_ARGS(p, cpus_requested, new_mask, ret), 1);
+
 DECLARE_RESTRICTED_HOOK(android_rvh_sched_fork_init,
 	TP_PROTO(struct task_struct *p),
 	TP_ARGS(p), 1);
@@ -235,18 +244,13 @@ DECLARE_RESTRICTED_HOOK(android_rvh_sched_balance_rt,
 	TP_PROTO(struct rq *rq, struct task_struct *p, int *done),
 	TP_ARGS(rq, p, done), 1);
 
-struct cfs_rq;
-DECLARE_RESTRICTED_HOOK(android_rvh_pick_next_entity,
-	TP_PROTO(struct cfs_rq *cfs_rq, struct sched_entity *curr,
-		 struct sched_entity **se),
-	TP_ARGS(cfs_rq, curr, se), 1);
-
 DECLARE_RESTRICTED_HOOK(android_rvh_check_preempt_wakeup,
 	TP_PROTO(struct rq *rq, struct task_struct *p, bool *preempt, bool *nopreempt,
 			int wake_flags, struct sched_entity *se, struct sched_entity *pse,
 			int next_buddy_marked),
 	TP_ARGS(rq, p, preempt, nopreempt, wake_flags, se, pse, next_buddy_marked), 1);
 
+struct cfs_rq;
 DECLARE_RESTRICTED_HOOK(android_rvh_update_deadline,
 	TP_PROTO(struct cfs_rq *cfs_rq, struct sched_entity *se, bool *skip_preempt),
 	TP_ARGS(cfs_rq, se, skip_preempt), 1);
@@ -434,6 +438,10 @@ DECLARE_HOOK(android_vh_mmput,
 	TP_PROTO(void *unused),
 	TP_ARGS(unused));
 
+DECLARE_HOOK(android_vh_mmput_mm,
+	TP_PROTO(struct mm_struct *mm),
+	TP_ARGS(mm));
+
 DECLARE_RESTRICTED_HOOK(android_rvh_attach_entity_load_avg,
 	TP_PROTO(struct cfs_rq *cfs_rq, struct sched_entity *se),
 	TP_ARGS(cfs_rq, se), 1);
@@ -481,6 +489,9 @@ DECLARE_HOOK(android_vh_prio_restore,
 	TP_ARGS(saved_prio));
 
 /* macro versions of hooks are no longer required */
+DECLARE_HOOK(android_vh_set_task_comm,
+	TP_PROTO(struct task_struct *p),
+	TP_ARGS(p));
 
 #endif /* _TRACE_HOOK_SCHED_H */
 /* This part must be outside protection */

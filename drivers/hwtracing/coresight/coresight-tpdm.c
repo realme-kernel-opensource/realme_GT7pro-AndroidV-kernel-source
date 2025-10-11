@@ -283,7 +283,7 @@ struct tpdm_drvdata {
 	bool			msr_support;
 	bool			msr_fix_req;
 	bool			cmb_msr_skip;
-	struct clk		*dclk;
+	struct clk		*atclk;
 };
 
 static void tpdm_init_default_data(struct tpdm_drvdata *drvdata);
@@ -695,22 +695,14 @@ static int tpdm_enable(struct coresight_device *csdev, struct perf_event *event,
 		return ret;
 	}
 
-	if (drvdata->dclk) {
-		ret = clk_prepare_enable(drvdata->dclk);
-		if (ret)
-			return ret;
-	}
-
 	mutex_lock(&drvdata->lock);
 	ret = coresight_get_aggre_atid(csdev);
 	if (ret < 0) {
 		mutex_unlock(&drvdata->lock);
-		if (drvdata->dclk)
-			clk_disable_unprepare(drvdata->dclk);
 		return ret;
 	}
 	drvdata->traceid = ret;
-	coresight_csr_set_etr_atid(csdev, drvdata->traceid, true);
+	coresight_csr_set_etr_atid(csdev, drvdata->traceid, true, NULL);
 	__tpdm_enable(drvdata);
 	drvdata->enable = true;
 	mutex_unlock(&drvdata->lock);
@@ -791,10 +783,8 @@ static void tpdm_disable(struct coresight_device *csdev,
 	mutex_lock(&drvdata->lock);
 	__tpdm_disable(drvdata);
 	drvdata->enable = false;
-	coresight_csr_set_etr_atid(csdev, drvdata->traceid, false);
+	coresight_csr_set_etr_atid(csdev, drvdata->traceid, false, NULL);
 	drvdata->traceid = 0;
-	if (drvdata->dclk)
-		clk_disable_unprepare(drvdata->dclk);
 	mutex_unlock(&drvdata->lock);
 
 	dev_info(drvdata->dev, "TPDM tracing disabled\n");
@@ -4243,7 +4233,7 @@ static int static_tpdm_enable(struct coresight_device *csdev,
 		return ret;
 
 	drvdata->traceid = ret;
-	coresight_csr_set_etr_atid(csdev, drvdata->traceid, true);
+	coresight_csr_set_etr_atid(csdev, drvdata->traceid, true, NULL);
 	drvdata->enable = true;
 
 	dev_info(drvdata->dev, "TPDM tracing enabled\n");
@@ -4264,7 +4254,7 @@ static void static_tpdm_disable(struct coresight_device *csdev,
 	}
 
 	drvdata->enable = false;
-	coresight_csr_set_etr_atid(csdev, drvdata->traceid, false);
+	coresight_csr_set_etr_atid(csdev, drvdata->traceid, false, NULL);
 	drvdata->traceid = 0;
 
 	dev_info(drvdata->dev, "TPDM tracing disabled\n");
@@ -4325,13 +4315,17 @@ static int tpdm_probe(struct amba_device *adev, const struct amba_id *id)
 	drvdata->dev = &adev->dev;
 	dev_set_drvdata(dev, drvdata);
 
-	drvdata->dclk = devm_clk_get(dev, "dynamic_clk");
-	if (!IS_ERR(drvdata->dclk)) {
-		ret = clk_prepare_enable(drvdata->dclk);
-		if (ret)
-			return ret;
-	} else
-		drvdata->dclk = NULL;
+	drvdata->atclk = devm_clk_get_optional_enabled(dev, "atclk"); /* optional */
+
+	if (!drvdata->atclk && of_property_read_bool(dev->of_node, "qcom,atclk-dependence")) {
+		dev_err(dev, "atclk is NULL\n");
+		return -EPROBE_DEFER;
+	}
+
+	if (IS_ERR(drvdata->atclk)) {
+		ret = PTR_ERR(drvdata->atclk);
+		return  ret == -ETIMEDOUT ? -EPROBE_DEFER : ret;
+	}
 
 	drvdata->base = devm_ioremap_resource(dev, &adev->res);
 	if (!drvdata->base)
@@ -4390,8 +4384,6 @@ static int tpdm_probe(struct amba_device *adev, const struct amba_id *id)
 		coresight_enable(drvdata->csdev);
 
 	pm_runtime_put_sync(&adev->dev);
-	if (drvdata->dclk)
-		clk_disable_unprepare(drvdata->dclk);
 	return 0;
 }
 
@@ -4495,9 +4487,33 @@ static int tpdm_freeze(struct device *dev)
 }
 #endif
 
+#ifdef CONFIG_PM
+static int tpdm_runtime_suspend(struct device *dev)
+{
+	struct tpdm_drvdata *drvdata = dev_get_drvdata(dev);
+
+	if (drvdata && !IS_ERR(drvdata->atclk))
+		clk_disable_unprepare(drvdata->atclk);
+
+	return 0;
+}
+
+static int tpdm_runtime_resume(struct device *dev)
+{
+	struct tpdm_drvdata *drvdata = dev_get_drvdata(dev);
+
+	if (drvdata && !IS_ERR(drvdata->atclk))
+		clk_prepare_enable(drvdata->atclk);
+
+	return 0;
+}
+#endif
+
 static const struct dev_pm_ops tpdm_dev_pm_ops = {
 	.suspend = tpdm_suspend,
 	.freeze  = tpdm_freeze,
+	SET_RUNTIME_PM_OPS(tpdm_runtime_suspend, tpdm_runtime_resume, NULL)
+
 };
 
 static struct amba_id tpdm_ids[] = {
@@ -4514,6 +4530,7 @@ static struct amba_driver tpdm_driver = {
 	.drv = {
 		.name   = "coresight-tpdm",
 		.owner	= THIS_MODULE,
+		.pm = &tpdm_dev_pm_ops,
 		.suppress_bind_attrs = true,
 		.pm	= pm_ptr(&tpdm_dev_pm_ops),
 	},

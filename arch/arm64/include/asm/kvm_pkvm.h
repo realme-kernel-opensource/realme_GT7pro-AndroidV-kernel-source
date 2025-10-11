@@ -254,7 +254,7 @@ void pkvm_host_reclaim_page(struct kvm *host_kvm, phys_addr_t ipa);
 #define PVM_ID_AA64ISAR2_ALLOW (\
 	ARM64_FEATURE_MASK(ID_AA64ISAR2_EL1_ATS1A) | \
 	ARM64_FEATURE_MASK(ID_AA64ISAR2_EL1_GPA3) | \
-	ARM64_FEATURE_MASK(ID_AA64ISAR2_EL1_MOPS) \
+	FIELD_PREP(ARM64_FEATURE_MASK(ID_AA64ISAR2_EL1_APA3), ID_AA64ISAR2_EL1_APA3_PAuth) \
 	)
 
 
@@ -676,4 +676,7 @@ int __pkvm_topup_hyp_alloc(unsigned long nr_pages);
 int pkvm_call_hyp_nvhe_ppage(struct kvm_pinned_page *ppage,
 			     int (*call_hyp_nvhe)(u64, u64, u8, void*),
 			     void *args, bool unmap);
+
+int pkvm_guest_stage2_pa(pkvm_handle_t handle, u64 ipa, phys_addr_t *phys);
+
 #endif	/* __ARM64_KVM_PKVM_H__ */

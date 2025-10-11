@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _LINUX_RPMSG_QCOM_GLINK_H
@@ -35,6 +35,10 @@ void qcom_glink_smem_unregister(struct qcom_glink_smem *glink);
 int qcom_glink_smem_start(struct qcom_glink_smem *glink);
 bool qcom_glink_is_wakeup(bool reset);
 void qcom_glink_early_ssr_notify(void *data);
+#if 1
+/* Merge CR3964917 for fix ALM[8638837] */
+void qcom_glink_smem_early_ssr_notify(void *data);
+#endif
 
 #else
 
@@ -47,6 +51,10 @@ qcom_glink_smem_register(struct device *parent,
 
 static inline void qcom_glink_smem_unregister(struct qcom_glink_smem *glink) {}
 static inline void qcom_glink_early_ssr_notify(void *data) {}
+#if 1
+/* Merge CR3964917 for fix ALM[8638837] */
+static inline void qcom_glink_smem_early_ssr_notify(void *data) {}
+#endif
 
 int qcom_glink_smem_start(struct qcom_glink_smem *glink)
 {

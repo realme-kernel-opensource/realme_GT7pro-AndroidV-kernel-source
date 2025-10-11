@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include "common.h"
@@ -128,8 +128,13 @@ static struct qcom_scmi_vendor_ops qcom_proto_ops = {
 static int qcom_scmi_vendor_protocol_init(const struct scmi_protocol_handle *ph)
 {
 	u32 version;
+	int ret;
 
-	ph->xops->version_get(ph, &version);
+	ret = ph->xops->version_get(ph, &version);
+	if (ret == -ETIMEDOUT)
+		ret = -EPROBE_DEFER;
+	if (ret)
+		return dev_err_probe(ph->dev, ret, "Unable to get version\n");
 
 	dev_dbg(ph->dev, "qcom scmi version %d.%d\n",
 		PROTOCOL_REV_MAJOR(version), PROTOCOL_REV_MINOR(version));
